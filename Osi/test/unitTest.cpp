@@ -678,13 +678,6 @@ int main (int argc, const char *argv[])
       << "Tests completed with " << totalErrCnt << " errors." << std::endl ; 
   } else
   { testingMessage("All tests completed successfully\n") ; }
-/*
-  Temporary hack: Always return 0 (success) until confirmed that we really do
-  want to return an error count, halting a test run in its tracks.
-
   return totalErrCnt;
-*/
-
-  return (0) ;
 }
 

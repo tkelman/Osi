@@ -823,7 +823,7 @@ public:
 
     /*! \brief Return the name of the objective function */
 
-    virtual std::string getObjName (unsigned maxLen = (unsigned)std::string::npos) const ;
+  virtual std::string getObjName (unsigned maxLen = static_cast<unsigned>(std::string::npos)) const ;
 
     /*! \brief Set the name of the objective function */
 
@@ -837,7 +837,7 @@ public:
       maxLen to limit the length.
     */
     virtual std::string getRowName(int rowIndex,
-				   unsigned maxLen = (unsigned)std::string::npos) const ;
+				   unsigned maxLen = static_cast<unsigned>(std::string::npos)) const ;
 
     /*! \brief Return a pointer to a vector of row names
 
@@ -882,7 +882,7 @@ public:
       maxLen to limit the length.
     */
     virtual std::string getColName(int colIndex,
-				   unsigned maxLen = (unsigned)std::string::npos) const ;
+				   unsigned maxLen = static_cast<unsigned>(std::string::npos)) const ;
 
     /*! \brief Return a pointer to a vector of column names
 
@@ -1449,6 +1449,12 @@ public:
 #ifdef COIN_SNAPSHOT
   /// Return a CoinSnapshot
   virtual CoinSnapshot * snapshot(bool createArrays=true) const;
+#endif
+#ifdef COIN_FACTORIZATION_INFO
+  /// Return number of entries in L part of current factorization
+  virtual CoinBigIndex getSizeL() const;
+  /// Return number of entries in U part of current factorization
+  virtual CoinBigIndex getSizeU() const;
 #endif
   //@}
 

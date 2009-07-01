@@ -15,7 +15,7 @@
 
 #include <stdio.h>
 
-#include <assert.h>
+#include <cassert>
 #include <iostream>
 
 #include "CoinHelperFunctions.hpp"
@@ -98,7 +98,8 @@ OsiPresolve::presolvedModel(OsiSolverInterface & si,
 			    bool keepIntegers,
 			    int numberPasses,
                             const char * prohibited,
-			    bool doStatus)
+			    bool doStatus,
+			    const char * rowProhibited)
 {
   ncols_ = si.getNumCols();
   nrows_ = si.getNumRows();
@@ -142,9 +143,10 @@ OsiPresolve::presolvedModel(OsiSolverInterface & si,
 
     
     CoinPresolveMatrix prob(ncols_,
-			maxmin,
-			presolvedModel_,
-			nrows_, nelems_,doStatus,nonLinearValue_,prohibited);
+			    maxmin,
+			    presolvedModel_,
+			    nrows_, nelems_,doStatus,nonLinearValue_,prohibited,
+			    rowProhibited);
     // make sure row solution correct
     if (doStatus) {
       double *colels	= prob.colels_;
@@ -181,6 +183,8 @@ OsiPresolve::presolvedModel(OsiSolverInterface & si,
 */
     paction_ = presolve(&prob) ;
     result = 0 ; 
+    // Get rid of useful arrays
+    prob.deleteStuff();
 /*
   This we don't need to do unless presolve actually reduced the system.
 */
@@ -226,21 +230,50 @@ OsiPresolve::presolvedModel(OsiSolverInterface & si,
     
       prob.update_model(presolvedModel_, nrows_, ncols_, nelems_);
 
-#     if PRESOLVE_CONSISTENCY > 0
+# if PRESOLVE_CONSISTENCY
       if (doStatus)
       { int basicCnt = 0 ;
+	int basicColumns = 0;
 	int i ;
-	CoinWarmStartBasis::Status status ;
+	CoinPresolveMatrix::Status status ;
 	for (i = 0 ; i < prob.ncols_ ; i++)
-	{ status = (CoinWarmStartBasis::Status) prob.getColumnStatus(i);
-	  if (status == CoinWarmStartBasis::basic) basicCnt++ ; }
+	{ status = prob.getColumnStatus(i);
+	  if (status == CoinPrePostsolveMatrix::basic) basicColumns++ ; }
+	basicCnt = basicColumns;
 	for (i = 0 ; i < prob.nrows_ ; i++)
-	{ status = (CoinWarmStartBasis::Status) prob.getRowStatus(i);
-	  if (status == CoinWarmStartBasis::basic) basicCnt++ ; }
+	{ status = prob.getRowStatus(i);
+	  if (status == CoinPrePostsolveMatrix::basic) basicCnt++ ; }
 
-	assert (basicCnt == prob.nrows_) ;
+# if PRESOLVE_DEBUG
+	presolve_check_nbasic(&prob) ;
+# endif
+	if (basicCnt>prob.nrows_) {
+	  // Take out slacks
+	  double * acts = prob.acts_;
+	  double * rlo = prob.rlo_;
+	  double * rup = prob.rup_;
+	  double infinity = si.getInfinity();
+	  for (i = 0 ; i < prob.nrows_ ; i++) {
+	    status = prob.getRowStatus(i);
+	    if (status == CoinPrePostsolveMatrix::basic) {
+	      basicCnt-- ;
+	      double down = acts[i]-rlo[i];
+	      double up = rup[i]-acts[i];
+	      if (CoinMin(up,down)<infinity) {
+		if (down<=up)
+		  prob.setRowStatus(i,CoinPrePostsolveMatrix::atLowerBound);
+		else
+		  prob.setRowStatus(i,CoinPrePostsolveMatrix::atUpperBound);
+	      } else {
+		prob.setRowStatus(i,CoinPrePostsolveMatrix::isFree);
+	      }
+	    }
+	    if (basicCnt==prob.nrows_)
+	      break;
+	  }
+	}
       }
-#     endif
+#endif
 
 /*
   Install the status and primal solution, if we've been carrying them along.
@@ -257,12 +290,12 @@ OsiPresolve::presolvedModel(OsiSolverInterface & si,
 	int i;
 	for (i=0;i<prob.ncols_;i++) {
 	  CoinWarmStartBasis::Status status = 
-	    (CoinWarmStartBasis::Status ) prob.getColumnStatus(i);
+	    static_cast<CoinWarmStartBasis::Status> (prob.getColumnStatus(i));
 	  basis->setStructStatus(i,status);
 	}
 	for (i=0;i<prob.nrows_;i++) {
 	  CoinWarmStartBasis::Status status = 
-	    (CoinWarmStartBasis::Status ) prob.getRowStatus(i);
+	    static_cast<CoinWarmStartBasis::Status> (prob.getRowStatus(i));
 	  basis->setArtifStatus(i,status);
 	}
 	presolvedModel_->setWarmStart(basis);
@@ -330,6 +363,13 @@ OsiPresolve::presolvedModel(OsiSolverInterface & si,
 						       <<CoinMessageEol;
 	  if (!result&&totalPasses>0) {
 	    result = -1; // round again
+	    const CoinPresolveAction *paction = paction_;
+	    while (paction) {
+	      const CoinPresolveAction *next = paction->next;
+	      delete paction;
+	      paction = next;
+	    }
+	    paction_=NULL;
 	  }
 	}
       }
@@ -463,12 +503,12 @@ OsiPresolve::postsolve(bool updateStatus)
     int i;
     for (i=0;i<ncols0;i++) {
       CoinWarmStartBasis::Status status = 
-	(CoinWarmStartBasis::Status ) prob.getColumnStatus(i);
+	static_cast<CoinWarmStartBasis::Status> (prob.getColumnStatus(i));
       basis->setStructStatus(i,status);
     }
     for (i=0;i<nrows0;i++) {
       CoinWarmStartBasis::Status status = 
-	(CoinWarmStartBasis::Status ) prob.getRowStatus(i);
+	static_cast<CoinWarmStartBasis::Status> (prob.getRowStatus(i));
       basis->setArtifStatus(i,status);
     }
     originalModel_->setWarmStart(basis);
@@ -544,6 +584,7 @@ void check_and_tell (const CoinPresolveMatrix *const prob,
     printf("\n") ;
 
     presolve_check_sol(prob) ;
+    presolve_check_nbasic(prob) ;
     mark = first ; }
 
   return ; }
@@ -618,7 +659,10 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
     bool slackd = true;
     bool doubleton = true;
     bool tripleton = true;
+    //#define NO_FORCING
+#ifndef NO_FORCING
     bool forcing = true;
+#endif
     bool ifree = true;
     bool zerocost = true;
     bool dupcol = true;
@@ -646,6 +690,12 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
     // stop x+y+z==1
     if ((presolveActions_&8)!=0)
       prob->setPresolveOptions(prob->presolveOptions()|4);
+    // switch on stuff which can't be unrolled easily
+    if ((presolveActions_&16)!=0)
+      prob->setPresolveOptions(prob->presolveOptions()|16);
+    // switch on gub stuff
+    if ((presolveActions_&32)!=0)
+      prob->setPresolveOptions(prob->presolveOptions()|32);
     
     /*
       The main loop (just below) starts with a minor loop that does
@@ -682,7 +732,15 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 
 
     int iLoop;
-
+    if (dupcol) {
+      // maybe allow integer columns to be checked
+      if ((presolveActions_&1)!=0)
+	prob->setPresolveOptions(prob->presolveOptions()|1);
+      paction_ = dupcol_action::presolve(prob, paction_);
+    }
+    if (duprow) {
+      paction_ = duprow_action::presolve(prob, paction_);
+    }
     // Check number rows dropped
     int lastDropped=0;
     /*
@@ -699,15 +757,30 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 
       const CoinPresolveAction * const paction0 = paction_;
       // look for substitutions with no fill
+      //#define IMPLIED 3
+#ifdef IMPLIED
+      int fill_level=3;
+#define IMPLIED2 1
+#if IMPLIED!=3
+#if IMPLIED>0&&IMPLIED<11
+      fill_level=IMPLIED;
+      printf("** fill_level == %d !\n",fill_level);
+#endif
+#if IMPLIED>11&&IMPLIED<21
+      fill_level=-(IMPLIED-10);
+      printf("** fill_level == %d !\n",fill_level);
+#endif
+#endif
+#else
       int fill_level=2;
-      //fill_level=10;
-      //printf("** fill_level == 10 !\n");
+#endif
       int whichPass=0;
 /*
   Apply inexpensive transforms until convergence.
 */
       while (1) {
 	whichPass++;
+	prob->pass_++;
 	const CoinPresolveAction * const paction1 = paction_;
 
 	if (slackd) {
@@ -720,6 +793,13 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 #	  if PRESOLVE_DEBUG
 	  check_and_tell(prob,paction_,pactiond) ;
 #	  endif
+	}
+
+	if (dual&&whichPass==1) {
+	  // this can also make E rows so do one bit here
+	  paction_ = remove_dual_action::presolve(prob, paction_);
+	  if (prob->status_)
+	    break;
 	}
 
 	if (doubleton) {
@@ -749,6 +829,7 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 #	  endif
 	}
 
+#ifndef NO_FORCING
 	if (forcing) {
 	  paction_ = forcing_constraint_action::presolve(prob, paction_);
 	  if (prob->status_)
@@ -757,8 +838,9 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 	  check_and_tell(prob,paction_,pactiond) ;
 #	  endif
 	}
+#endif
 
-	if (ifree) {
+	if (ifree&&(whichPass%5)==1) {
 	  paction_ = implied_free_action::presolve(prob, paction_,fill_level);
 	  if (prob->status_)
 	    break;
@@ -866,8 +948,15 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 	  if (prob->status_)
 	    break;
 	  if (ifree) {
+#ifdef IMPLIED
+#if IMPLIED2 ==0
 	    int fill_level=0; // switches off substitution
-	    paction_ = implied_free_action::presolve(prob, paction_,fill_level);
+#elif IMPLIED2!=99
+	    int fill_level=IMPLIED2;
+#endif
+#endif
+	    if ((itry&1)==0)
+	      paction_ = implied_free_action::presolve(prob, paction_,fill_level);
 #	    if PRESOLVE_DEBUG
 	    check_and_tell(prob,paction_,pactiond) ;
 #	    endif
@@ -877,6 +966,18 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 	  if (paction_ == paction2)
 	    break;
 	}
+      } else if (ifree) {
+	// just free
+#ifdef IMPLIED
+#if IMPLIED2 ==0
+	int fill_level=0; // switches off substitution
+#elif IMPLIED2!=99
+	int fill_level=IMPLIED2;
+#endif
+#endif
+	paction_ = implied_free_action::presolve(prob, paction_,fill_level);
+	if (prob->status_)
+	  break;
       }
 
       if (dupcol) {
@@ -898,6 +999,9 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
 #	endif
 	if (prob->status_)
 	  break;
+      }
+      if ((presolveActions_&32)!=0) {
+	paction_ = gubrow_action::presolve(prob, paction_);
       }
 	  
       bool stopLoop=false;
@@ -926,7 +1030,7 @@ const CoinPresolveAction *OsiPresolve::presolve(CoinPresolveMatrix *prob)
         }
       }
 #if	PRESOLVE_DEBUG
-      presolve_check_sol(prob,1.0e0);
+      presolve_check_sol(prob,1);
 #endif
       if (paction_ == paction0||stopLoop)
 	break;
@@ -1193,6 +1297,22 @@ CoinPrePostsolveMatrix::CoinPrePostsolveMatrix(const OsiSolverInterface * si,
   CoinDisjointCopyN(si->getRowLower(), nrows,  rlo_);
   CoinDisjointCopyN(si->getRowUpper(), nrows,  rup_);
   int i;
+  // initialize and clean up bounds
+  double infinity = si->getInfinity();
+  if (infinity!=COIN_DBL_MAX) {
+    for (i=0;i<ncols_in;i++) {
+      if (clo_[i]==-infinity)
+	clo_[i]=-COIN_DBL_MAX;
+      if (cup_[i]==infinity)
+	cup_[i]=COIN_DBL_MAX;
+    }
+    for (i=0;i<nrows_in;i++) {
+      if (rlo_[i]==-infinity)
+	rlo_[i]=-COIN_DBL_MAX;
+      if (rup_[i]==infinity)
+	rup_[i]=COIN_DBL_MAX;
+    }
+  }
   for (i=0;i<ncols_in;i++) 
     originalColumn_[i]=i;
   for (i=0;i<nrows_in;i++) 
@@ -1221,17 +1341,16 @@ static bool isGapFree(const CoinPackedMatrix& matrix)
   return (! (i >= 0));
 }
 CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
-				     double maxmin_,
-				     // end prepost members
-
-				     OsiSolverInterface * si,
-
-				     // rowrep
-				     int nrows_in,
-				     CoinBigIndex nelems_in,
-			       bool doStatus,
-			       double nonLinearValue,
-                                       const char * prohibited) :
+				       double maxmin_,
+				       // end prepost members
+				       OsiSolverInterface * si,
+				       // rowrep
+				       int nrows_in,
+				       CoinBigIndex nelems_in,
+				       bool doStatus,
+				       double nonLinearValue,
+                                       const char * prohibited,
+				       const char * rowProhibited) :
 
   CoinPrePostsolveMatrix(si,
 			ncols0_in, nrows_in, nelems_in),
@@ -1258,7 +1377,6 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
   nextRowsToDo_(new int[nrows_in]),
   numberNextRowsToDo_(0),
   presolveOptions_(0)
-
 {
 
   rowels_ = new double [bulk0_] ;
@@ -1288,13 +1406,12 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
     for (j=start[icol];j<start[icol]+length[icol];j++) {
       if (fabs(element[j])>ZTOLDP) {
         hrow_[nel]=row[j];
-        colels_[nel++]=element[j];
+	colels_[nel++]=element[j];
       }
     }
     hincol_[icol]=nel-mcstrt_[icol];
     mcstrt_[icol+1]=nel;
   }
-  assert (nelems_>=nel);
 
   // same thing for row rep
   CoinPackedMatrix * m = new CoinPackedMatrix();
@@ -1362,7 +1479,14 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
   } else {
     anyProhibited_ = false;
   }
-
+  // Any rows special?
+  if (rowProhibited) {
+    anyProhibited_ = true;
+    for (int irow=0;irow<nrows_;irow++) {
+      if (rowProhibited[irow])
+	setRowProhibited(irow);
+    }
+  }
   if (doStatus) {
     // allow for status and solution
     sol_ = new double[ncols_];
@@ -1411,6 +1535,8 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
   // this must come after the calls to presolve_prefix
   mcstrt_[ncols_] = bufsize-1;
   mrstrt_[nrows_] = bufsize-1;
+  // Allocate useful arrays
+  initializeStuff();
 
 #if	CHECK_CONSISTENCY
   consistent(false);

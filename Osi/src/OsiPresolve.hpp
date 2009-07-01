@@ -91,7 +91,8 @@ public:
 					     bool keepIntegers=true,
 					     int numberPasses=5,
                                              const char * prohibited=NULL,
-					     bool doStatus=true);
+					     bool doStatus=true,
+					     const char * rowProhibited=NULL);
 
   /*! \brief Restate the solution to the presolved problem in terms of the
 	     original problem and load it into the original model.
@@ -127,6 +128,14 @@ public:
   /// Return a pointer to the original rows
   const int * originalRows() const;
 
+  /// Return number of rows in original model
+  inline int getNumRows() const
+  { return nrows_;}
+
+  /// Return number of columns in original model
+  inline int getNumCols() const
+  { return ncols_;}
+
   /** "Magic" number. If this is non-zero then any elements with this value
       may change and so presolve is very limited in what can be done
       to the row and column.  This is for non-linear problems.
@@ -141,6 +150,8 @@ public:
       2 bit set switches off actions which can change +1 to something else
       4 bit set transfers costs to integer variables
       8 bit set stops x+y+z=1 transform
+      16 bit set allows doing presolve things which don't easily unroll
+      32 bit set allows dubious gub element reduction
   */
   inline void setPresolveActions(int action)
   { presolveActions_  = (presolveActions_&0xffff0000)|(action&0xffff);}
