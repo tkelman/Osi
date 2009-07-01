@@ -1307,7 +1307,13 @@ bool test16SebastianNowozin(OsiSolverInterface *s) {
 	// Outer iterations
 	s->setObjective(objective);
 //	si->messageHandler()->setLogLevel(0);	// no verbosity
-	s->resolve();	// Warm-start
+        /*
+	  The code provided with ticket 54 is illegal --- this call cannot
+	  be resolve(). The first solve must be an initialSolve, for the
+	  benefit of solvers which use it for initialisation.
+	  -- lh, 080903 --
+	*/
+	s->initialSolve() ;
 	if (!s->isProvenOptimal()) {
 		failureMessage(*s, "resolve does not solve problem");
 		return false;
@@ -1429,7 +1435,7 @@ bool test17SebastianNowozin(OsiSolverInterface *s) {
 	try {
 		s->enableSimplexInterface(true);
 	} catch (CoinError e) {
-		failureMessage(*s, string("enableSimplexInterface(true) threw exception: ")+e.message());
+		failureMessage(*s, std::string("enableSimplexInterface(true) threw exception: ")+e.message());
 		return false;
 	}
 	
@@ -1437,7 +1443,7 @@ bool test17SebastianNowozin(OsiSolverInterface *s) {
 		double dummy[4] = { 1., 1., 1., 1.};
 		s->getReducedGradient(dummy, dummy, dummy);
 	} catch (CoinError e) {
-		failureMessage(*s, string("getReducedGradient threw exception: ")+e.message());
+		failureMessage(*s, std::string("getReducedGradient threw exception: ")+e.message());
 		return false;
 	}
 
@@ -5096,9 +5102,8 @@ OsiSolverInterfaceCommonUnitTest(const OsiSolverInterface* emptySi,
     test_functions.push_back(std::pair<TestFunction, const char*>(&test13VivianDeSmedt,"test13VivianDeSmedt"));
     test_functions.push_back(std::pair<TestFunction, const char*>(&test14VivianDeSmedt,"test14VivianDeSmedt"));
     test_functions.push_back(std::pair<TestFunction, const char*>(&test15VivianDeSmedt,"test15VivianDeSmedt"));
-    if ( !dylpSolverInterface ) //TODO; took out DyLP here because it's crashing with a seg.fault
-      test_functions.push_back(std::pair<TestFunction, const char*>(&test16SebastianNowozin, "test16SebastianNowozin"));
-   	test_functions.push_back(std::pair<TestFunction, const char*>(&test17SebastianNowozin, "test17SebastianNowozin"));
+    test_functions.push_back(std::pair<TestFunction, const char*>(&test16SebastianNowozin, "test16SebastianNowozin"));
+    test_functions.push_back(std::pair<TestFunction, const char*>(&test17SebastianNowozin, "test17SebastianNowozin"));
 
     unsigned int i;
     for (i = 0; i < test_functions.size(); ++i) {

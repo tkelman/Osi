@@ -1177,7 +1177,7 @@ CoinPrePostsolveMatrix::CoinPrePostsolveMatrix(const OsiSolverInterface * si,
   messages_()
 
 {
-  bulk0_ = CoinBigIndex(bulkRatio_*nelems_in) ;
+  bulk0_ = static_cast<CoinBigIndex>(bulkRatio_*nelems_in) ;
   hrow_ = new int [bulk0_] ;
   colels_ = new double[bulk0_] ;
 
@@ -1265,7 +1265,7 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
   hcol_ = new int [bulk0_] ;
 
   nrows_ = si->getNumRows() ;
-  const CoinBigIndex bufsize = CoinBigIndex(bulkRatio_*nelems_in) ;
+  const CoinBigIndex bufsize = static_cast<CoinBigIndex>(bulkRatio_*nelems_in) ;
 
   // Set up change bits
   rowChanged_ = new unsigned char[nrows_];
@@ -1286,7 +1286,7 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
   for (icol=0;icol<ncols_;icol++) {
     int j;
     for (j=start[icol];j<start[icol]+length[icol];j++) {
-      if (element[j]) {
+      if (fabs(element[j])>ZTOLDP) {
         hrow_[nel]=row[j];
         colels_[nel++]=element[j];
       }
@@ -1316,7 +1316,7 @@ CoinPresolveMatrix::CoinPresolveMatrix(int ncols0_in,
   for (irow=0;irow<nrows_;irow++) {
     int j;
     for (j=start[irow];j<start[irow]+length[irow];j++) {
-      if (element[j]) {
+      if (fabs(element[j])>ZTOLDP) {
         hcol_[nel]=column[j];
         rowels_[nel++]=element[j];
       }
